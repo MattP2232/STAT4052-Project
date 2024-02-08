@@ -2,9 +2,9 @@
 
 As a part of my Applied Statistics course (STAT 4052), a partner and I we're tasked with completing a project centered around statistical analysis of diabatic patients. In doing so, we implemented an Iterative Regression model, along with various classification models including Random Forest, K-Nearest Neighbors, and Logistic Regression.
 
-This repository includes my statistical analysis conducted in R Studio, the diabetic status dataset, and my written report.
+This repository includes our statistical analysis conducted in R Studio, the diabetic status dataset, and our written report.
 
-Below is the introduction for my written report to give you a better idea of the process and results of this project. Thanks!
+Below is the introduction for our written report to give you a better idea of what to expect from this project. Thanks!
 
 ## Introduction
 
