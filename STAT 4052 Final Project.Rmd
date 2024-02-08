@@ -1,0 +1,303 @@
+---
+title: "STAT 4052 Final Project"
+author: "Matt Parker"
+date: "2024-02-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# library settings
+
+library(class)
+library(randomForest)
+library(nnet)
+library(mltools)
+library(data.table)
+library(MASS)
+library(glmnet)
+library(ROCR)
+library(smallstuff)
+library(pROC)
+```
+
+```{r}
+# Preliminaries
+
+df<- read.table("~/STAT 4052/4052 Final Project/Diabetes12.txt")
+data <- df
+data$HbA1c_level[is.na(data$HbA1c_level)] <- mean(data$HbA1c_level, na.rm = TRUE)
+data <- data[!is.na(data$hypertension), ]
+data <- data[!is.na(data$diabetes), ]
+data$gender <- as.factor(data$gender)
+data$smoking_history <- as.factor(data$smoking_history)
+df1 <- one_hot(as.data.table(data),dropUnusedLevels = TRUE)
+df1$diabetes <- as.factor(df1$diabetes)
+df1$hypertension <- as.factor(df1$hypertension)
+df1$heart_disease <- as.factor(df1$heart_disease)
+colnames(df1)[11]<-"smoking_history_no_info"
+colnames(df1)[12]<-"smoking_history_not_current"
+```
+
+
+```{r}
+# Logistic Regression
+
+small1<- glm(diabetes~1,data = df1,family = binomial)
+large1<- glm(diabetes~., data = df1,family = binomial)
+forward<- step(small1, scope = list(upper = large1, lower = small1), method = "forward")
+```
+
+
+```{r}
+# LR Optimal Model             
+y<- as.numeric(df1$diabetes) - 1
+m1_final<- glm(diabetes~ HbA1c_level+blood_glucose_level+ age+ bmi+hypertension+heart_disease +smoking_history_no_info+ gender_Male+smoking_history_ever,data = df1,family = binomial )
+pred_lr <- predict(m1_final, type = "response")
+y_lr <- ifelse(pred_lr > 0.5, 1, 0)
+ER_lr <- mean((y - as.numeric(y_lr))^2)
+ER_lr    
+```
+
+
+```{r}
+# KNN Stage 1
+
+set.seed(1234)
+n <- nrow(df1)
+train_ind <- sample(1:n, 0.8 * n)
+train <- df1[train_ind, ]
+test <- df1[-train_ind, ]
+
+knn3 <- knn(as.matrix(train[, c(1:15)]), as.matrix(test[, c(1:15)]), cl = train$diabetes, k = 3, prob = TRUE)
+knn5 <- knn(as.matrix(train[, c(1:15)]), as.matrix(test[, c(1:15)]), cl = train$diabetes, k = 5, prob = TRUE)
+knn10 <- knn(as.matrix(train[, c(1:15)]), as.matrix(test[, c(1:15)]), cl = train$diabetes, k = 10, prob = TRUE)
+knn20 <- knn(as.matrix(train[, c(1:15)]), as.matrix(test[, c(1:15)]), cl = train$diabetes, k = 20, prob = TRUE)
+knn60 <- knn(as.matrix(train[, c(1:15)]), as.matrix(test[, c(1:15)]), cl = train$diabetes, k = 60, prob = TRUE)
+knn80 <- knn(as.matrix(train[, c(1:15)]), as.matrix(test[, c(1:15)]), cl = train$diabetes, k = 80, prob = TRUE)
+
+err3 <- mean(test$diabetes != knn3)
+err5 <- mean(test$diabetes != knn5)
+err10 <- mean(test$diabetes != knn10)
+err20 <- mean(test$diabetes != knn20)
+err60 <- mean(test$diabetes != knn60)
+err80 <- mean(test$diabetes != knn80)
+
+knn_result1<-data.frame(k = c(3,5,10,20,60,80),Val_error = c(err3, err5, err10, err20, err60, err80))
+knn_result1     
+```
+
+
+```{r}
+# Random Forest Stage 1
+
+set.seed(1234)
+colnames(train)[1] <- "Female"
+colnames(train)[2] <- "Male"
+colnames(train)[3] <- "Non_Binary"
+colnames(train)[6] <- "Heart_Disease"
+colnames(train)[7] <- "Current_Smoker"
+colnames(train)[8] <- "Has_Smoked"
+colnames(train)[9] <- "Former_Smoker"
+colnames(train)[10] <- "Never_Smoked"
+colnames(train)[11] <- "No_Smoking_Info"
+colnames(train)[12] <- "Not_Current_Smoker"
+colnames(train)[14] <- "HbA1c_Levels"
+colnames(train)[15] <- "Blood_Glucose"
+
+colnames(test)[1] <- "Female"
+colnames(test)[2] <- "Male"
+colnames(test)[3] <- "Non_Binary"
+colnames(test)[6] <- "Heart_Disease"
+colnames(test)[7] <- "Current_Smoker"
+colnames(test)[8] <- "Has_Smoked"
+colnames(test)[9] <- "Former_Smoker"
+colnames(test)[10] <- "Never_Smoked"
+colnames(test)[11] <- "No_Smoking_Info"
+colnames(test)[12] <- "Not_Current_Smoker"
+colnames(test)[14] <- "HbA1c_Levels"
+colnames(test)[15] <- "Blood_Glucose"
+
+rf1<- randomForest(diabetes~.,data = train,mtry = 5,importance = TRUE)
+varImpPlot(rf1, n.var = 8, main = "Variable Importance Plot")
+
+pred_rf_1 <- predict(rf1, type = "response")
+y_rf <- ifelse(as.numeric(pred_rf_1) > 0.5, 1, 0)
+ER_rf <- mean((y - as.numeric(y_rf))^2)
+ER_rf
+pred_rf<- predict(rf1,test)
+table(pred_rf,test$diabetes)
+err_rf1<-mean(pred_rf!=test$diabetes)
+err_rf1
+```
+
+
+```{r}
+# ROC curve and AUC value for KNN, logistic, random forest
+
+library(smallstuff)
+
+ROCknn(knn20, test$diabetes)
+
+pred_logit <- prediction(pred_lr, df1$diabetes)
+perf_logit <- performance(pred_logit, "tpr", "fpr")
+plot(perf_logit, colorize = TRUE, main = "ROC curve for Logistic Regression")
+AUC_logit <- performance(pred_logit, "auc")@y.values[[1]]
+AUC_logit
+
+rf1.roc <- roc(train$diabetes, rf1$votes[,2])
+plot.roc(rf1.roc, main = "ROC curve for Random Forest")
+auc(rf1.roc)
+varImpPlot(rf1, n.var = 8, main = "Variable Importance Plot")
+```
+
+
+```{r}
+# Iterative regression
+
+# original dataset with one hot coding 
+df<- read.table("~/STAT 4052/4052 Final Project/Diabetes12.txt")
+data1<-df
+data1$smoking_history<- as.factor(as.factor(data1$smoking_history))
+data1$gender<- as.factor(as.factor(data1$gender))
+data1<- one_hot(as.data.table(data1))
+data1$diabetes <- as.factor(data1$diabetes)
+data1$hypertension <- as.factor(data1$hypertension)
+data1$heart_disease <- as.factor(data1$heart_disease)
+
+# one hot coding with missingness
+new_data <- df
+new_data$diabetes[is.na(new_data$diabetes)] <- 0
+new_data$hypertension[is.na(new_data$hypertension)] <- 0
+new_data$HbA1c_level[is.na(new_data$HbA1c_level)] <- mean(new_data$HbA1c_level,na.rm= TRUE)
+
+new_data$smoking_history<- as.factor(as.factor(new_data$smoking_history))
+new_data$gender<- as.factor(as.factor(new_data$gender))
+df2 <- one_hot(as.data.table(new_data))
+
+df2$diabetes <- as.factor(df2$diabetes)
+df2$hypertension <- as.factor(df2$hypertension)
+df2$heart_disease <- as.factor(df2$heart_disease)
+
+colnames(df2)[11]<-"smoking_history_no_info"
+colnames(df2)[12]<-"smoking_history_not_current"
+```
+
+
+```{r}
+# Iterative regression loop
+
+n<- 10
+for(i in 1:n){
+  m_level<- lm(HbA1c_level~.,df2, subset=!is.na(data1$HbA1c_level))
+  pred_level<- predict(m_level,df2[is.na(data1$HbA1c_level),])
+  df2$HbA1c_level[is.na(data1$HbA1c_level)]<- pred_level
+  
+  library(nnet)
+  m_hypertension<- multinom(hypertension~.,df2, subset=!is.na(data1$hypertension),trace = FALSE)
+  pred_hypertension<- predict(m_hypertension,df2[is.na(data1$hypertension),])
+  df2$hypertension[is.na(data1$hypertension)]<- pred_hypertension
+  
+  m_diabetes<-multinom(diabetes~.,df2 ,subset=!is.na(data1$diabetes),trace=FALSE)
+  pred_diabetes<- predict(m_diabetes,df2[is.na(data1$diabetes),])
+  df2$diabetes[is.na(data1$diabetes)]<- pred_diabetes
+}
+```
+
+
+```{r}
+# logistic for optimal model using forward backward selection
+
+small2<- glm(diabetes~1,data = df2,family = binomial)
+large2<- glm(diabetes~., data = df2,family = binomial)
+step(small2, scope = list(upper = large2, lower = small2), 
+     method = "forward")
+```
+
+
+```{r}
+# optimal model for logistic regression and  error rate
+
+m2_final<- glm(formula = diabetes ~ HbA1c_level + blood_glucose_level + 
+                 age + bmi + heart_disease + hypertension + smoking_history_no_info, 
+               family = binomial, data = df2)
+y2<- as.numeric(df2$diabetes) - 1
+pred_lr2 <- predict(m2_final, type = "response")
+y_lr2 <- ifelse(pred_lr2 > 0.5, 1, 0)
+ER_lr2 <- mean((y2 - as.numeric(y_lr2))^2)
+ER_lr2
+```
+
+
+```{r}
+# KNN Stage 2
+
+set.seed(4052)
+n <- nrow(df2)
+train_ind <- sample(1:n, 0.8 * n)
+train2 <- df2[train_ind, ]
+test2 <- df2[-train_ind, ]
+
+new_knn3 <- knn(as.matrix(train2[, c(1:15)]), as.matrix(test2[, c(1:15)]), cl = train2$diabetes, k = 3, prob = TRUE)
+new_knn5 <- knn(as.matrix(train2[, c(1:15)]), as.matrix(test2[, c(1:15)]), cl = train2$diabetes, k = 5,prob = TRUE)
+new_knn10 <- knn(as.matrix(train2[, c(1:15)]), as.matrix(test2[, c(1:15)]), cl = train2$diabetes, k = 10,prob = TRUE)
+new_knn20 <- knn(as.matrix(train2[, c(1:15)]), as.matrix(test2[, c(1:15)]), cl = train2$diabetes, k = 20,prob = TRUE)
+new_knn60 <- knn(as.matrix(train2[, c(1:15)]), as.matrix(test2[, c(1:15)]), cl = train2$diabetes, k = 60,prob = TRUE)
+new_knn80 <- knn(as.matrix(train2[, c(1:15)]), as.matrix(test2[, c(1:15)]), cl = train2$diabetes, k = 80,prob = TRUE)
+
+new_err3 <- mean(test2$diabetes != new_knn3)
+new_err5 <- mean(test2$diabetes != new_knn5)
+new_err10 <- mean(test2$diabetes != new_knn10)
+new_err20 <- mean(test2$diabetes != new_knn20)
+new_err60 <- mean(test2$diabetes != new_knn60)
+new_err80 <- mean(test2$diabetes != new_knn80)
+
+knn_result1<-data.frame(k = c(3,5,10,20,60,80),Val_error = c(new_err3, new_err5, new_err10,new_err20,new_err60,new_err80))
+knn_result1
+```
+
+
+```{r}
+# Random Forest Stage 2
+rf2<- randomForest(diabetes~.,data = train2,mtry = 5,importance = TRUE)
+pred_rf2<- predict(rf2,test2)
+table(pred_rf2,test2$diabetes)
+err_rf2<-mean(pred_rf2!=test2$diabetes)
+err_rf2
+varImpPlot(rf2,main = "random forest variable importance plot using iterative regression")
+```
+
+
+```{r}
+# ROC curve and AUC value for KNN, logistic, random forest
+
+par(mfrow  = c(1,2))
+ROCknn(new_knn60, test2$diabetes)
+ROCknn(new_knn20,test2$diabetes)
+
+pred_lr2 <- predict(m2_final, type = "response")
+pred_logit2 <- prediction(pred_lr2, df2$diabetes)
+perf_logit2 <- performance(pred_logit2, "tpr", "fpr")
+plot(perf_logit2, colorize = TRUE, main = "ROC curve for Logistic
+Regression")
+AUC_logit <- performance(pred_logit2, "auc")@y.values[[1]]
+AUC_logit
+
+library(pROC)
+rf2.roc <- roc(train2$diabetes, rf2$votes[,2])
+plot.roc(rf2.roc, main = "ROC curve for Random Forest")
+par(mfrow = c(1,2))
+auc(rf2.roc)
+```
+
+
+```{r}
+# Plot comparsion for simple and iterative regression imputation
+par(mfrow=c(1,2))
+hist(df1$HbA1c_level,breaks=20,main="Imputed data for simple imputation for hbA1c level",xlab="HbA1c level",freq=FALSE)
+hist(df2$HbA1c_level,breaks=20,main="Imputed data for iterative regression hbA1c level",xlab="HbA1c level",freq=FALSE)
+```
+
